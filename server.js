@@ -19,6 +19,7 @@ import categoryRoutes from "./routes/categoryRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
 import brandRoutes from "./routes/brandRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
+import orderRoutes from "./routes/orderRoutes.js";
 
 // Import middleware
 import errorHandler from "./middleware/errorHandler.js";
@@ -73,6 +74,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/brands", brandRoutes);
+app.use("/api/orders", orderRoutes);
 
 // 404 handler
 app.use("*", (req, res) => {
