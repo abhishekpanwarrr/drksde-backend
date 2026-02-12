@@ -1,43 +1,141 @@
 // controllers/orderController.js
 import db from "../config/database.js";
 
+// export const createOrder = async (req, res, next) => {
+//   try {
+//     const { items, addressId, paymentMethod } = req.body;
+//     const userId = req.user.userId;
+//     if (!addressId) {
+//       return res.status(400).json({ message: "Address is required" });
+//     }
+//     if (!items || items.length === 0) {
+//       return res.status(400).json({ message: "Cart is empty" });
+//     }
+
+//     // Calculate total
+//     let total = 0;
+//     for (const item of items) {
+//       total += Number(item.price) * item.quantity;
+//     }
+
+//     const orderResult = await db.query(
+//       `INSERT INTO orders (user_id, total_amount, payment_method,address_id)
+//        VALUES ($1, $2, $3, $4) RETURNING order_id`,
+//       [userId, total, paymentMethod],
+//     );
+
+//     const orderId = orderResult.rows[0].order_id;
+
+//     for (const item of items) {
+//       await db.query(
+//         `INSERT INTO order_items (order_id, product_id, quantity, price)
+//          VALUES ($1, $2, $3, $4)`,
+//         [orderId, item.product_id, item.quantity, item.price],
+//       );
+//     }
+
+//     res.status(201).json({
+//       status: "success",
+//       order_id: orderId,
+//     });
+//   } catch (err) {
+//     next(err);
+//   }
+// };
+
+
 export const createOrder = async (req, res, next) => {
+  const client = await db.pool.connect();
+
   try {
     const { items, addressId, paymentMethod } = req.body;
     const userId = req.user.userId;
+
+    if (!addressId) {
+      return res.status(400).json({ message: "Address is required" });
+    }
 
     if (!items || items.length === 0) {
       return res.status(400).json({ message: "Cart is empty" });
     }
 
-    // Calculate total
-    let total = 0;
-    for (const item of items) {
-      total += Number(item.price) * item.quantity;
+    // 🔒 Verify address belongs to user
+    const addressCheck = await client.query(
+      "SELECT address_id FROM addresses WHERE address_id = $1 AND user_id = $2",
+      [addressId, userId],
+    );
+
+    if (addressCheck.rowCount === 0) {
+      return res.status(403).json({ message: "Invalid address" });
     }
 
-    const orderResult = await db.query(
-      `INSERT INTO orders (user_id, total_amount, payment_method)
-       VALUES ($1, $2, $3) RETURNING order_id`,
-      [userId, total, paymentMethod],
+    await client.query("BEGIN");
+
+    let total = 0;
+    const verifiedItems = [];
+
+    // 🔒 Recalculate price from DB (IMPORTANT)
+    for (const item of items) {
+      const productRes = await client.query(
+        `
+        SELECT product_id, 
+               COALESCE(sale_price, base_price) AS price
+        FROM products
+        WHERE product_id = $1 AND is_active = true
+        `,
+        [item.product_id],
+      );
+
+      if (productRes.rowCount === 0) {
+        throw new Error("Invalid product in cart");
+      }
+
+      const price = Number(productRes.rows[0].price);
+      const lineTotal = price * item.quantity;
+
+      total += lineTotal;
+
+      verifiedItems.push({
+        product_id: item.product_id,
+        quantity: item.quantity,
+        price,
+      });
+    }
+
+    // ✅ Create order
+    const orderResult = await client.query(
+      `
+      INSERT INTO orders (user_id, total_amount, payment_method, address_id)
+      VALUES ($1, $2, $3, $4)
+      RETURNING order_id
+      `,
+      [userId, total, paymentMethod, addressId],
     );
 
     const orderId = orderResult.rows[0].order_id;
 
-    for (const item of items) {
-      await db.query(
-        `INSERT INTO order_items (order_id, product_id, quantity, price)
-         VALUES ($1, $2, $3, $4)`,
+    // ✅ Insert order items
+    for (const item of verifiedItems) {
+      await client.query(
+        `
+        INSERT INTO order_items (order_id, product_id, quantity, price)
+        VALUES ($1, $2, $3, $4)
+        `,
         [orderId, item.product_id, item.quantity, item.price],
       );
     }
+
+    await client.query("COMMIT");
 
     res.status(201).json({
       status: "success",
       order_id: orderId,
     });
   } catch (err) {
+    await client.query("ROLLBACK");
     next(err);
+  } finally {
+    client.release();
   }
 };
 

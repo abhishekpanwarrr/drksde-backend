@@ -1,8 +1,10 @@
 // config/database.js
 import { Pool } from "pg";
 import dotenv from "dotenv";
-
 dotenv.config();
+console.log("Loaded DB_HOST:", process.env.DB_HOST);
+console.log("Loaded DB_NAME:", process.env.DB_NAME);
+
 
 const pool = new Pool({
   host: process.env.DB_HOST,
